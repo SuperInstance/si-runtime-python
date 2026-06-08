@@ -1,27 +1,25 @@
-"""SuperInstance Python Runtime — unified runtime for constraint-aware AI."""
+"""si-runtime — Python runtime for the SuperInstance ecosystem."""
 
-__version__ = "0.1.0"
-
-from .conservation import Budget, AgentBudget, allocate, transfer, audit
-from .spectral import AdjacencyMatrix, power_iteration, spectral_rank
-from .capability import Capability, Registry, match_capabilities
-from .cell import Cell
+from .conservation import Budget, AgentBudget, Violation, transfer, audit
+from .spectral import adjacency_matrix, power_iteration, spectral_rank
+from .capability import Capability, Registry
+from .cell import Cell, Grid
 from .agent import Agent
 from .fleet import Fleet
 
 __all__ = [
     "Budget",
     "AgentBudget",
-    "allocate",
+    "Violation",
     "transfer",
     "audit",
-    "AdjacencyMatrix",
+    "adjacency_matrix",
     "power_iteration",
     "spectral_rank",
     "Capability",
     "Registry",
-    "match_capabilities",
     "Cell",
+    "Grid",
     "Agent",
     "Fleet",
 ]

@@ -1,121 +1,92 @@
-"""Conservation budget enforcement.
-
-The invariant: gamma (kinetic) + eta (potential) = total (constant).
-Any operation that would violate this returns a ConservationError.
-"""
+"""Conservation budget management — invariant: gamma + eta == total."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
 
 
-class ConservationError(Exception):
-    """Raised when gamma + eta != total after an operation."""
-    pass
-
-
-@dataclass(frozen=True)
+@dataclass
 class Budget:
-    """Immutable conservation budget."""
-    gamma: float   # kinetic / active energy
-    eta: float     # potential / reserve energy
-    total: float   # constant C = gamma + eta
+    """Top-level conservation budget envelope."""
+    total: float
+    gamma: float  # spectral budget
+    eta: float    # capability budget
 
-    def __post_init__(self):
-        if not _approx_eq(self.gamma + self.eta, self.total):
-            raise ConservationError(
-                f"Invariant broken: {self.gamma} + {self.eta} != {self.total}"
-            )
-        if self.gamma < 0 or self.eta < 0:
-            raise ConservationError("Energy components must be non-negative")
 
-    @staticmethod
-    def create(total: float) -> "Budget":
-        """Create a fresh budget with energy split evenly."""
-        return Budget(gamma=total / 2.0, eta=total / 2.0, total=total)
+@dataclass
+class Violation:
+    """Records a broken conservation invariant."""
+    agent_id: str
+    expected: float
+    actual: float
+    delta: float
 
 
 @dataclass
 class AgentBudget:
-    """Mutable per-agent budget wrapper."""
-    gamma: float
-    eta: float
-    total: float
+    """Per-agent budget tracker."""
+    id: str
+    budget: Budget
+    _allocated: float = 0.0
+    _spent: float = 0.0
 
-    @staticmethod
-    def create(total: float) -> "AgentBudget":
-        return AgentBudget(gamma=total / 2.0, eta=total / 2.0, total=total)
-
-    def _check(self) -> None:
-        if not _approx_eq(self.gamma + self.eta, self.total):
-            raise ConservationError(
-                f"Invariant broken: {self.gamma} + {self.eta} != {self.total}"
+    def allocate(self, amount: float) -> None:
+        if amount < 0:
+            raise ValueError(f"cannot allocate negative amount: {amount}")
+        if self._allocated + amount > self.budget.total:
+            raise ValueError(
+                f"allocation {self._allocated + amount} exceeds budget {self.budget.total}"
             )
-        if self.gamma < 0 or self.eta < 0:
-            raise ConservationError("Energy components must be non-negative")
+        self._allocated += amount
+
+    def spend(self, amount: float) -> None:
+        if amount < 0:
+            raise ValueError(f"cannot spend negative amount: {amount}")
+        if self._spent + amount > self._allocated:
+            raise ValueError(
+                f"spend {self._spent + amount} exceeds allocation {self._allocated}"
+            )
+        self._spent += amount
+
+    @property
+    def remaining(self) -> float:
+        return self._allocated - self._spent
 
 
-@dataclass(frozen=True)
-class Audit:
-    """Result of a conservation audit."""
-    gamma: float
-    eta: float
-    total: float
-    utilization: float
-    valid: bool
+def validate_budget(b: Budget) -> bool:
+    """Check the conservation invariant: gamma + eta == total."""
+    return abs(b.gamma + b.eta - b.total) < 1e-9
 
 
-def allocate(budget: AgentBudget, gamma: float, eta: float) -> None:
-    """Reallocate energy between gamma and eta."""
-    if gamma < 0 or eta < 0:
-        raise ConservationError("Cannot allocate negative energy")
-    if not _approx_eq(gamma + eta, budget.total):
-        raise ConservationError(
-            f"Allocation must sum to total {budget.total}, got {gamma + eta}"
+def transfer(from_agent: AgentBudget, to_agent: AgentBudget, amount: float) -> None:
+    """Move budget between agents, validating the conservation invariant."""
+    if amount <= 0:
+        raise ValueError(f"transfer amount must be positive: {amount}")
+    if from_agent.remaining < amount:
+        raise ValueError(
+            f"agent {from_agent.id} has insufficient remaining budget: {from_agent.remaining}"
         )
-    budget.gamma = gamma
-    budget.eta = eta
-    budget._check()
+    from_agent.spend(amount)
+    to_agent.allocate(amount)
+    # Verify invariant still holds on both sides
+    for ag in (from_agent, to_agent):
+        if not validate_budget(ag.budget):
+            raise ValueError(f"conservation invariant violated for agent {ag.id}")
 
 
-def transfer(budget: AgentBudget, from_gamma: bool, amount: float) -> None:
-    """Transfer amount from gamma to eta (or reverse)."""
-    if amount < 0:
-        raise ConservationError("Cannot transfer negative amount")
-    if from_gamma:
-        if budget.gamma < amount:
-            raise ConservationError("Insufficient gamma energy")
-        budget.gamma -= amount
-        budget.eta += amount
-    else:
-        if budget.eta < amount:
-            raise ConservationError("Insufficient eta energy")
-        budget.eta -= amount
-        budget.gamma += amount
-    budget._check()
-
-
-def audit(budget: AgentBudget) -> Audit:
-    """Audit the budget and return a report."""
-    try:
-        budget._check()
-        valid = True
-    except ConservationError:
-        valid = False
-
-    utilization = 0.0
-    if budget.total > 0:
-        utilization = 1.0 - (budget.gamma + budget.eta - abs(budget.gamma - budget.eta)) / (2.0 * budget.total)
-
-    return Audit(
-        gamma=budget.gamma,
-        eta=budget.eta,
-        total=budget.total,
-        utilization=utilization,
-        valid=valid,
-    )
-
-
-def _approx_eq(a: float, b: float, tol: float = 1e-9) -> bool:
-    return abs(a - b) <= tol
+def audit(budgets: list[AgentBudget]) -> list[Violation]:
+    """Audit a list of agent budgets, returning any violations."""
+    violations: list[Violation] = []
+    for ag in budgets:
+        b = ag.budget
+        actual = b.gamma + b.eta
+        if abs(actual - b.total) >= 1e-9:
+            violations.append(
+                Violation(
+                    agent_id=ag.id,
+                    expected=b.total,
+                    actual=actual,
+                    delta=abs(actual - b.total),
+                )
+            )
+    return violations
